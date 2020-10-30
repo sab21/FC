@@ -98,3 +98,419 @@ Group By 1
 On src.emailaddress=tgt.emailaddress
 Order By src.emailaddress
 
+
+------------------------------------
+--CONSO Picker Productivity Query
+------------------------------------
+Select 	src.emailaddress
+		,'2020-10-15 00:00:00' as Conso_Picking_Date
+		,src.totalnotfound as totalpick_including_notfound
+		,src.B2B_Picking_Qty as B2B_ConsoPicking_Qty
+		,src.B2C_Picking_Qty as B2C_ConsoPicking_Qty
+		,src.totalpick,src.totalprocess as Actual_Conso_Picking_Qty
+		,tgt.Working_Hrs_total as Total_Hrs
+		,Round(((src.totalprocess/tgt.Working_Minutes_total)*60)::numeric,2) as Conso_Picking_EPH
+		,src.BabyGear_Qty,src.Consumable_Qty
+From( 
+	--To get Conso Pick Details
+Select  "emailaddress", sum("quantity") as totalpick, sum("processquantity") as totalprocess
+		,sum("notfoundquantity") as totalnotfound 
+		,sum(case when businesstype = 'B2B' then processquantity else 0 end) as B2B_Picking_Qty
+		,sum(case when businesstype = 'B2C' then processquantity else 0 end) as B2C_Picking_Qty
+		,sum(case when productcatid = '7' then processquantity else 0 end) as BabyGear_Qty
+		,sum(case when productcatid = '999' then processquantity else 0 end) as Consumable_Qty
+From(--For Final GroupBy
+ Select * From(--For Union
+  Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+	             ,J1.productid, productcatid
+  From( --For Join with fc_productdetails
+   SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+        FROM whracks10.orderitemsrackconsodetails
+        WHERE   (
+        "processquantity" >0
+        OR "notfoundquantity" >0
+         )
+        AND   (
+        "taskid" IN(SELECT distinct "taskid"
+                    FROM whracks10.taskmaster
+                    WHERE "tasktype" = 'ConsoOut'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 		)
+        			)
+			)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid)U
+Union All
+ Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+				,J1.productid, productcatid
+ From( --For Join with fc_productdetails
+	SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+    FROM whracksarchive10.orderitemsrackconsodetails
+    WHERE ("processquantity" >0 OR "notfoundquantity" >0)
+        AND (
+        	"taskid" IN(SELECT distinct "taskid"
+                    FROM whracksarchive10.taskmaster
+                    WHERE "tasktype" = 'ConsoOut'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 			)	
+        				)
+		)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid
+)Final1
+Group By 1
+Order By 1
+)src
+-- get total working hours: 
+Left Join (
+Select emailaddress
+		,Sum(Case When Working_Minutes < 0 Then Working_interval+'2020-10-15 23:59:59'::timestamp-'2020-10-15 00:00:00'::timestamp Else Working_interval End) as Working_Hrs_total
+		,Sum(Case When Working_Minutes < 0 Then Working_Minutes+1440 Else Working_Minutes End) As Working_Minutes_total
+From(
+Select 	emailaddress
+		,Sum(Case When status = 'out' then diff_interval end)-Sum(Case When status = 'in' then diff_interval end) as Working_interval
+		,Sum(Case When status = 'out' then diff_minutes end)-Sum(Case When status = 'in' then diff_minutes end) as Working_Minutes
+From(
+	SELECT "emailaddress", "status", "actiontime" --, "modulename", "mac", "lastactivetime","userid", "role"
+				,date_part('day',actiontime-'2020-10-15 00:00:00' )*1440+date_part('hour',actiontime-'2020-10-15 00:00:00' )*60 + date_part('minute',actiontime-'2020-10-15 00:00:00' ) as diff_minutes
+				,actiontime-'2020-10-15 00:00:00'::timestamp as diff_interval
+		FROM whracks10.userworkdetails_log --days_diff * 24 + DATE_PART('hour', end - start )
+		WHERE "actiontime" >= '2020-10-15 00:00:00' 
+		AND "actiontime" <= '2020-10-15 23:59:59'
+		--AND "emailaddress" = '12251@firstcry.com'
+		--AND "emailaddress" = '91987@firstcry.com'
+		AND status in ('in','out')
+		AND "modulename" IN('b2c_pick_completed_orders', 'b2c_not_found_list')
+		ORDER BY actiontime ASC
+) WH
+Group By 1
+)WH
+Group By 1
+)tgt 
+On src.emailaddress=tgt.emailaddress
+Order By src.emailaddress
+
+
+
+------------------------------------
+--Conso Rackin Productivity Query
+------------------------------------
+Select 	src.emailaddress
+		,'2020-10-15 00:00:00' as Conso_Racking_Date
+		,src.totalnotfound,	src.B2B_Picking_Qty as B2B_ConsoRacking_Qty
+		,src.B2C_Picking_Qty as B2C_ConsoRacking_Qty
+		,src.totalpick as totalpick_incl_notfound
+		,src.totalprocess as Actual_Conso_Racking_Qty
+		,tgt.Working_Hrs_total as Total_Hrs
+		,Round(((src.totalprocess/tgt.Working_Minutes_total)*60)::numeric,2) as Conso_Racking_EPH
+		,src.BabyGear_Qty,src.Consumable_Qty
+From( 
+	--To Conso Rackin  Details
+Select  "emailaddress", sum("quantity") as totalpick, sum("processquantity") as totalprocess
+		,sum("notfoundquantity") as totalnotfound 
+		,sum(case when businesstype = 'B2B' then processquantity else 0 end) as B2B_Picking_Qty
+		,sum(case when businesstype = 'B2C' then processquantity else 0 end) as B2C_Picking_Qty
+		,sum(case when productcatid = '7' then processquantity else 0 end) as BabyGear_Qty
+		,sum(case when productcatid = '999' then processquantity else 0 end) as Consumable_Qty
+From(--For Final GroupBy
+ Select * From(--For Union
+  Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+	             ,J1.productid, productcatid
+  From( --For Join with fc_productdetails
+   SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+        FROM whracks10.orderitemsrackpickdetails
+        WHERE   (
+        "processquantity" >0
+        OR "notfoundquantity" >0
+         )
+        AND   (
+        "taskid" IN(SELECT distinct "taskid"
+                    FROM whracks10.taskmaster
+                    WHERE "tasktype" = 'Conso'
+					AND taskname in ('B2CExcessRackIn', 'B2BExcessRackIn', 'B2BConsoRackIn', 'B2CConsoRackIn')
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 		)
+        			)
+			)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid)U
+Union All
+ Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+				,J1.productid, productcatid
+ From( --For Join with fc_productdetails
+	SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+    FROM whracksarchive10.orderitemsrackpickdetails
+    WHERE ("processquantity" >0 OR "notfoundquantity" >0)
+        AND (
+        	"taskid" IN(SELECT distinct "taskid"
+                    FROM whracksarchive10.taskmaster
+                    WHERE "tasktype" = 'Conso'
+					AND taskname in ('B2CExcessRackIn', 'B2BExcessRackIn', 'B2BConsoRackIn', 'B2CConsoRackIn')
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 			)	
+        				)
+		)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid
+)Final1
+Group By 1
+Order By 1
+)src
+-- get total working hours: 
+Left Join (
+Select emailaddress
+		,Sum(Case When Working_Minutes < 0 Then Working_interval+'2020-10-15 23:59:59'::timestamp-'2020-10-15 00:00:00'::timestamp Else Working_interval End) as Working_Hrs_total
+		,Sum(Case When Working_Minutes < 0 Then Working_Minutes+1440 Else Working_Minutes End) As Working_Minutes_total
+From(
+Select 	emailaddress
+		,Sum(Case When status = 'out' then diff_interval end)-Sum(Case When status = 'in' then diff_interval end) as Working_interval
+		,Sum(Case When status = 'out' then diff_minutes end)-Sum(Case When status = 'in' then diff_minutes end) as Working_Minutes
+From(
+	SELECT "emailaddress", "status", "actiontime" --, "modulename", "mac", "lastactivetime","userid", "role"
+				,date_part('day',actiontime-'2020-10-15 00:00:00' )*1440+date_part('hour',actiontime-'2020-10-15 00:00:00' )*60 + date_part('minute',actiontime-'2020-10-15 00:00:00' ) as diff_minutes
+				,actiontime-'2020-10-15 00:00:00'::timestamp as diff_interval
+		FROM whracks10.userworkdetails_log --days_diff * 24 + DATE_PART('hour', end - start )
+		WHERE "actiontime" >= '2020-10-15 00:00:00' 
+		AND "actiontime" <= '2020-10-15 23:59:59'
+		--AND "emailaddress" = '12251@firstcry.com'
+		--AND "emailaddress" = '91987@firstcry.com'
+		AND status in ('in','out')
+		AND "modulename" IN('b2c_consolidate_orders', 'b2b_consolidate_orders', 'b2c_add_excess_items', 
+							'b2b_add_excess_items', 'b2b_consolidate_orders_b2b')
+		ORDER BY actiontime ASC
+) WH
+Group By 1
+)WH
+Group By 1
+)tgt 
+On src.emailaddress=tgt.emailaddress
+Order By src.emailaddress
+
+
+
+						
+------------------------------------
+--Packing Productivity Query
+------------------------------------
+Select 	src.emailaddress
+		,'2020-10-15 00:00:00' as Packing_Date
+		,src.totalnotfound as totalpick_incl_notfound
+		,src.B2B_Picking_Qty as B2B_Packing_Qty
+		,src.B2C_Picking_Qty  as B2C_Packing_Qty
+		,src.totalpick  as totalpick_including_notfound
+		,src.totalprocess as Actual_Packing_Qty
+		,tgt.Working_Hrs_total as Total_Hrs
+		,Round(((src.totalprocess/tgt.Working_Minutes_total)*60)::numeric,2) as Packing_EPH
+		,src.BabyGear_Qty,src.Consumable_Qty
+From( 
+	--To get Packing Details
+Select  "emailaddress", sum("quantity") as totalpick, sum("processquantity") as totalprocess
+		,sum("notfoundquantity") as totalnotfound 
+		,sum(case when businesstype = 'B2B' then processquantity else 0 end) as B2B_Picking_Qty
+		,sum(case when businesstype = 'B2C' then processquantity else 0 end) as B2C_Picking_Qty
+		,sum(case when productcatid = '7' then processquantity else 0 end) as BabyGear_Qty
+		,sum(case when productcatid = '999' then processquantity else 0 end) as Consumable_Qty
+From(--For Final GroupBy
+ Select * From(--For Union
+  Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+	             ,J1.productid, productcatid
+  From( --For Join with fc_productdetails
+   SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+        FROM whracks10.packingbinitemdetails
+        WHERE   (
+        "processquantity" >0
+        OR "notfoundquantity" >0
+         )
+        AND   (
+        "taskid" IN(SELECT distinct "taskid"
+                    FROM whracks10.taskmaster
+                    WHERE "tasktype" = 'Packing'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 		)
+        			)
+			)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid)U
+Union All
+ Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+				,J1.productid, productcatid
+ From( --For Join with fc_productdetails
+	SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+    FROM whracksarchive10.packingbinitemdetails
+    WHERE ("processquantity" >0 OR "notfoundquantity" >0)
+        AND (
+        	"taskid" IN(SELECT distinct "taskid"
+                    FROM whracksarchive10.taskmaster
+                    WHERE "tasktype" = 'Packing'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 			)	
+        				)
+		)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid
+)Final1
+Group By 1
+Order By 1
+)src
+-- get total working hours: 
+Left Join (
+Select emailaddress
+		,Sum(Case When Working_Minutes < 0 Then Working_interval+'2020-10-15 23:59:59'::timestamp-'2020-10-15 00:00:00'::timestamp Else Working_interval End) as Working_Hrs_total
+		,Sum(Case When Working_Minutes < 0 Then Working_Minutes+1440 Else Working_Minutes End) As Working_Minutes_total
+From(
+Select 	emailaddress
+		,Sum(Case When status = 'out' then diff_interval end)-Sum(Case When status = 'in' then diff_interval end) as Working_interval
+		,Sum(Case When status = 'out' then diff_minutes end)-Sum(Case When status = 'in' then diff_minutes end) as Working_Minutes
+From(
+	SELECT "emailaddress", "status", "actiontime" --, "modulename", "mac", "lastactivetime","userid", "role"
+				,date_part('day',actiontime-'2020-10-15 00:00:00' )*1440+date_part('hour',actiontime-'2020-10-15 00:00:00' )*60 + date_part('minute',actiontime-'2020-10-15 00:00:00' ) as diff_minutes
+				,actiontime-'2020-10-15 00:00:00'::timestamp as diff_interval
+		FROM whracks10.userworkdetails_log --days_diff * 24 + DATE_PART('hour', end - start )
+		WHERE "actiontime" >= '2020-10-15 00:00:00' 
+		AND "actiontime" <= '2020-10-15 23:59:59'
+		--AND "emailaddress" = '12251@firstcry.com'
+		--AND "emailaddress" = '91987@firstcry.com'
+		AND status in ('in','out')
+		AND "modulename" IN ('bin/box_packing','b2b_packing')
+	ORDER BY actiontime ASC
+) WH
+Group By 1
+)WH
+Group By 1
+)tgt 
+On src.emailaddress=tgt.emailaddress
+Order By src.emailaddress
+
+
+
+------------------------------------
+--QC Productivity Query
+------------------------------------
+Select 	src.emailaddress
+		,'2020-10-15 00:00:00' as QC_Date
+		,src.totalnotfound as totalpick_incl_notfound
+		,src.B2B_Picking_Qty as B2B_QC_Qty
+		,src.B2C_Picking_Qty as B2C_QC_Qty
+		,src.totalpick as totalpick_including_notfound
+		,src.totalprocess as Actual_QC_Qty
+		,tgt.Working_Hrs_total as Total_Hrs
+		,Round(((src.totalprocess/tgt.Working_Minutes_total)*60)::numeric,2) as QC_EPH
+		,src.BabyGear_Qty,src.Consumable_Qty
+From( 
+	--To get QC Details
+Select  "emailaddress", sum("quantity") as totalpick, sum("processquantity") as totalprocess
+		,sum("notfoundquantity") as totalnotfound 
+		,sum(case when businesstype = 'B2B' then processquantity else 0 end) as B2B_Picking_Qty
+		,sum(case when businesstype = 'B2C' then processquantity else 0 end) as B2C_Picking_Qty
+		,sum(case when productcatid = '7' then processquantity else 0 end) as BabyGear_Qty
+		,sum(case when productcatid = '999' then processquantity else 0 end) as Consumable_Qty
+From(--For Final GroupBy
+ Select * From(--For Union
+  Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+	             ,J1.productid, productcatid
+  From( --For Join with fc_productdetails
+   SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+        FROM whracks10.orderitemsrackqcdetails
+        WHERE   (
+        "processquantity" >0
+        OR "notfoundquantity" >0
+         )
+        AND   (
+        "taskid" IN(SELECT distinct "taskid"
+                    FROM whracks10.taskmaster
+                    WHERE "tasktype" = 'QCShipping'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 		)
+        			)
+			)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid)U
+Union All
+ Select Distinct J1.id,"emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity"
+				,J1.productid, productcatid
+ From( --For Join with fc_productdetails
+	SELECT "id","emailaddress","businesstype", "quantity", "processquantity", "notfoundquantity","productid"
+    FROM whracksarchive10.orderitemsrackqcdetails
+    WHERE ("processquantity" >0 OR "notfoundquantity" >0)
+        AND (
+        	"taskid" IN(SELECT distinct "taskid"
+                    FROM whracksarchive10.taskmaster
+                    WHERE "tasktype" = 'QCShipping'
+                    AND   (
+                    ("startdate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59' or  "enddate" between '2020-10-15 00:00:00' and '2020-10-15 23:59:59')
+                    OR ('2020-10-15 00:00:00' between "startdate" and enddate or '2020-10-15 23:59:59' between "startdate" and enddate)
+                 			)	
+        				)
+		)
+        AND "lastmodifieddate" < '2020-10-15 23:59:59'
+        AND "lastmodifieddate" > '2020-10-15 00:00:00' 
+	)J1
+	Left Join orderworkflow.fc_productdetails as J2
+	on J1.productid = J2.productid
+)Final1
+Group By 1
+Order By 1
+)src
+-- get total working hours: 
+Left Join (
+Select emailaddress
+		,Sum(Case When Working_Minutes < 0 Then Working_interval+'2020-10-15 23:59:59'::timestamp-'2020-10-15 00:00:00'::timestamp Else Working_interval End) as Working_Hrs_total
+		,Sum(Case When Working_Minutes < 0 Then Working_Minutes+1440 Else Working_Minutes End) As Working_Minutes_total
+From(
+Select 	emailaddress
+		,Sum(Case When status = 'out' then diff_interval end)-Sum(Case When status = 'in' then diff_interval end) as Working_interval
+		,Sum(Case When status = 'out' then diff_minutes end)-Sum(Case When status = 'in' then diff_minutes end) as Working_Minutes
+From(
+	SELECT "emailaddress", "status", "actiontime" --, "modulename", "mac", "lastactivetime","userid", "role"
+				,date_part('day',actiontime-'2020-10-15 00:00:00' )*1440+date_part('hour',actiontime-'2020-10-15 00:00:00' )*60 + date_part('minute',actiontime-'2020-10-15 00:00:00' ) as diff_minutes
+				,actiontime-'2020-10-15 00:00:00'::timestamp as diff_interval
+		FROM whracks10.userworkdetails_log --days_diff * 24 + DATE_PART('hour', end - start )
+		WHERE "actiontime" >= '2020-10-15 00:00:00' 
+		AND "actiontime" <= '2020-10-15 23:59:59'
+		--AND "emailaddress" = '12251@firstcry.com'
+		--AND "emailaddress" = '91987@firstcry.com'
+		AND status in ('in','out')
+		AND "modulename" IN('qc_shipping', 'qc-shipping')
+		ORDER BY actiontime ASC
+) WH
+Group By 1
+)WH
+Group By 1
+)tgt 
+On src.emailaddress=tgt.emailaddress
+Order By src.emailaddress
