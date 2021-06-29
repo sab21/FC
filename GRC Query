@@ -1,0 +1,58 @@
+Query1=('''
+
+Select 
+    i.referenceid as "Reference No",
+    g.grcno as "GRC No",
+    g.pono as "PO No",
+    g.invoiceno as "Invoice No",
+    g.productid as "Product ID",
+    g.grcstatus as "GRC Status",
+    v.name as "Vendor Name",
+    g.createddate as "GRC Created Date",
+    g.createdby as "GRC Created By",
+    g.lastmodifieddate as "Last Modified Date",
+    g.lastmodifiedby as "Last Modified By",
+    pd.stickername as "Product Sticker Name",
+    g.mrp as "MRP",
+    g.basecost as "Base Cost",
+    g.srno as "SR No",
+    g.orderedquantity as "Ordered Qty",
+    g.invoicequantity as "Invoice Qty",
+    g.totalreceivequantity as "Total Received Qty",
+    g.extraquantity as "Extra Qty",
+    g.lessquantity as "Less Qty",
+    g.rejectedquantity as "Rejected Qty",
+    g.rtvreason as "RTV Reason",
+    g.onholdquantity as "On Hold Qty",
+    g.onholdreason as "On Hold Reason",
+    g.storeinquantity as "Store In Qty",
+    Case When g.grcstatus = 'grconhold' Then g.lastmodifiedby else 'Not On Hold' 
+        End as "On Hold By"
+    ,Case When g.grcstatus = 'grconhold' Then g.lastmodifieddate 
+        End as "On Hold Date"
+    ,Case when g.storeinquantity>0 Then pd.createdby else 'GRN Not Done' 
+        End as "GRN Done By"
+    ,Case when g.storeinquantity>0 Then pd.createddate 
+        End as "GRN Date"
+    , Case  When g.warehouseid = 2 Then 'CHAKAN'
+            When g.warehouseid = 7 Then 'BANGALORE'
+            When g.warehouseid = 9 Then 'HARYANA'
+            When g.warehouseid = 10 Then 'PNQ'
+            When g.warehouseid = 11 Then 'FRQ'
+            When g.warehouseid = 12 Then 'INDORE'
+    End as "Warehouse"
+From purchasedb.goodsreceivedcheck g
+Left Join purchasedb.materialinwardpodetails m
+    ON m.srno=g.inwardid
+Left Join purchasedb.purchaseinvoice i
+    ON i.referenceid=m.invreferenceid
+Left Join purchasedb.vendormaster v
+    ON v.vendorcode=m.vendorcode
+Left Join purchasedb.purchaseinvoicedetails pd
+    ON pd.referenceid=i.referenceid AND g.grcno=pd.grcno 
+
+where g.lastmodifieddate between '2021-05-31 00:00:00' AND '2021-05-31 23:59:59'
+
+
+
+''')
